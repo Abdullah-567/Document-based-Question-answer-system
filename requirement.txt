@@ -1,7 +1,4 @@
 streamlit
-sentence-transformers
 transformers
 torch
 pypdf
-scikit-learn
-numpy
