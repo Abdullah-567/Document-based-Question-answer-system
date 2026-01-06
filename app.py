@@ -1,15 +1,13 @@
 import streamlit as st
 import tempfile
 import os
-from pypdf import PdfReader
+import PyPDF2
 from transformers import pipeline
 
-# ---------------- UI ----------------
 st.set_page_config(page_title="📄 Document Q&A", layout="wide")
 st.title("📄 Document Question Answering")
 st.write("Upload a PDF or TXT file and ask questions.")
 
-# ---------------- Load model ----------------
 @st.cache_resource
 def load_model():
     return pipeline(
@@ -19,7 +17,6 @@ def load_model():
 
 qa_model = load_model()
 
-# ---------------- Upload ----------------
 uploaded_file = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
 
 if uploaded_file:
@@ -30,8 +27,10 @@ if uploaded_file:
     if st.button("📥 Process File"):
         try:
             if uploaded_file.name.endswith(".pdf"):
-                reader = PdfReader(file_path)
-                text = " ".join(page.extract_text() or "" for page in reader.pages)
+                reader = PyPDF2.PdfReader(file_path)
+                text = ""
+                for page in reader.pages:
+                    text += page.extract_text() or ""
             else:
                 with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()
@@ -45,7 +44,6 @@ if uploaded_file:
         except Exception as e:
             st.error(e)
 
-# ---------------- Q&A ----------------
 if st.session_state.get("ready", False):
     st.divider()
     st.header("❓ Ask a Question")
@@ -61,6 +59,4 @@ if st.session_state.get("ready", False):
 
             st.subheader("📌 Answer")
             st.write(result["answer"])
-
-
 
