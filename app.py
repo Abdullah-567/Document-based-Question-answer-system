@@ -1,30 +1,23 @@
 import streamlit as st
 import tempfile
 import os
-import numpy as np
-
-from sentence_transformers import SentenceTransformer
-from transformers import pipeline
 from pypdf import PdfReader
-from sklearn.metrics.pairwise import cosine_similarity
+from transformers import pipeline
 
 # ---------------- UI ----------------
 st.set_page_config(page_title="📄 Document Q&A", layout="wide")
 st.title("📄 Document Question Answering")
-st.write("Upload a PDF or TXT file and ask questions about it.")
+st.write("Upload a PDF or TXT file and ask questions.")
 
-# ---------------- Load models ----------------
+# ---------------- Load model ----------------
 @st.cache_resource
-def load_models():
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    qa_model = pipeline(
-        "text2text-generation",
-        model="google/flan-t5-base",
-        max_length=256
+def load_model():
+    return pipeline(
+        "question-answering",
+        model="distilbert-base-cased-distilled-squad"
     )
-    return embedder, qa_model
 
-embedder, qa_model = load_models()
+qa_model = load_model()
 
 # ---------------- Upload ----------------
 uploaded_file = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
@@ -35,32 +28,22 @@ if uploaded_file:
         file_path = f.name
 
     if st.button("📥 Process File"):
-        with st.spinner("Processing document..."):
-            try:
-                if uploaded_file.name.endswith(".pdf"):
-                    reader = PdfReader(file_path)
-                    text = " ".join(
-                        page.extract_text() or "" for page in reader.pages
-                    )
-                else:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        text = f.read()
+        try:
+            if uploaded_file.name.endswith(".pdf"):
+                reader = PdfReader(file_path)
+                text = " ".join(page.extract_text() or "" for page in reader.pages)
+            else:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    text = f.read()
 
-                # Split text
-                chunks = [text[i:i+500] for i in range(0, len(text), 400)]
+            st.session_state.document_text = text
+            st.session_state.ready = True
+            st.success("✅ Document processed successfully")
 
-                # Create embeddings
-                embeddings = embedder.encode(chunks)
+            os.unlink(file_path)
 
-                st.session_state.chunks = chunks
-                st.session_state.embeddings = embeddings
-                st.session_state.ready = True
-
-                st.success(f"✅ Document processed ({len(chunks)} chunks)")
-                os.unlink(file_path)
-
-            except Exception as e:
-                st.error(e)
+        except Exception as e:
+            st.error(e)
 
 # ---------------- Q&A ----------------
 if st.session_state.get("ready", False):
@@ -70,26 +53,14 @@ if st.session_state.get("ready", False):
     question = st.text_input("Enter your question")
 
     if st.button("🤖 Get Answer") and question:
-        with st.spinner("Finding answer..."):
-            q_embedding = embedder.encode([question])
-            scores = cosine_similarity(q_embedding, st.session_state.embeddings)[0]
-
-            top_idx = np.argmax(scores)
-            context = st.session_state.chunks[top_idx]
-
-            prompt = f"""
-            Answer the question based on the context below.
-
-            Context:
-            {context}
-
-            Question:
-            {question}
-            """
-
-            answer = qa_model(prompt)[0]["generated_text"]
+        with st.spinner("Answering..."):
+            result = qa_model(
+                question=question,
+                context=st.session_state.document_text[:4000]
+            )
 
             st.subheader("📌 Answer")
-            st.write(answer)
+            st.write(result["answer"])
+
 
 
