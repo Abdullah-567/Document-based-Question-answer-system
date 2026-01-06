@@ -1,99 +1,95 @@
 import streamlit as st
 import tempfile
 import os
+import numpy as np
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_community.llms import HuggingFacePipeline
-from langchain.chains import RetrievalQA
-
+from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 from pypdf import PdfReader
+from sklearn.metrics.pairwise import cosine_similarity
 
-# ------------------ UI ------------------
+# ---------------- UI ----------------
 st.set_page_config(page_title="📄 Document Q&A", layout="wide")
-st.title("📄 Document Q&A App")
-st.write("Upload a PDF or TXT file, then ask questions about it.")
+st.title("📄 Document Question Answering")
+st.write("Upload a PDF or TXT file and ask questions about it.")
 
-# ------------------ Upload ------------------
+# ---------------- Load models ----------------
+@st.cache_resource
+def load_models():
+    embedder = SentenceTransformer("all-MiniLM-L6-v2")
+    qa_model = pipeline(
+        "text2text-generation",
+        model="google/flan-t5-base",
+        max_length=256
+    )
+    return embedder, qa_model
+
+embedder, qa_model = load_models()
+
+# ---------------- Upload ----------------
 uploaded_file = st.file_uploader("Upload PDF or TXT", type=["pdf", "txt"])
 
 if uploaded_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as f:
+    with tempfile.NamedTemporaryFile(delete=False) as f:
         f.write(uploaded_file.getbuffer())
         file_path = f.name
 
     if st.button("📥 Process File"):
         with st.spinner("Processing document..."):
             try:
-                # Read file
-                if file_path.endswith(".pdf"):
+                if uploaded_file.name.endswith(".pdf"):
                     reader = PdfReader(file_path)
-                    text = ""
-                    for page in reader.pages:
-                        text += page.extract_text() or ""
+                    text = " ".join(
+                        page.extract_text() or "" for page in reader.pages
+                    )
                 else:
                     with open(file_path, "r", encoding="utf-8") as f:
                         text = f.read()
 
                 # Split text
-                splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=500,
-                    chunk_overlap=100
-                )
-                chunks = splitter.split_text(text)
+                chunks = [text[i:i+500] for i in range(0, len(text), 400)]
 
-                # Embeddings
-                embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2"
-                )
+                # Create embeddings
+                embeddings = embedder.encode(chunks)
 
-                # Vector store
-                vectordb = FAISS.from_texts(chunks, embeddings)
+                st.session_state.chunks = chunks
+                st.session_state.embeddings = embeddings
+                st.session_state.ready = True
 
-                # Save to session
-                st.session_state.vectordb = vectordb
-                st.session_state.file_ready = True
-
-                st.success(f"✅ File processed successfully! ({len(chunks)} chunks)")
+                st.success(f"✅ Document processed ({len(chunks)} chunks)")
                 os.unlink(file_path)
 
             except Exception as e:
-                st.error(f"Error processing file: {e}")
+                st.error(e)
 
-# ------------------ Q&A ------------------
-if st.session_state.get("file_ready", False):
+# ---------------- Q&A ----------------
+if st.session_state.get("ready", False):
     st.divider()
     st.header("❓ Ask a Question")
 
-    question = st.text_input("Type your question here")
+    question = st.text_input("Enter your question")
 
     if st.button("🤖 Get Answer") and question:
-        with st.spinner("Thinking..."):
-            try:
-                # Load local model
-                qa_pipeline = pipeline(
-                    "text2text-generation",
-                    model="google/flan-t5-base",
-                    max_length=256
-                )
+        with st.spinner("Finding answer..."):
+            q_embedding = embedder.encode([question])
+            scores = cosine_similarity(q_embedding, st.session_state.embeddings)[0]
 
-                llm = HuggingFacePipeline(pipeline=qa_pipeline)
+            top_idx = np.argmax(scores)
+            context = st.session_state.chunks[top_idx]
 
-                qa_chain = RetrievalQA.from_chain_type(
-                    llm=llm,
-                    retriever=st.session_state.vectordb.as_retriever(),
-                    chain_type="stuff"
-                )
+            prompt = f"""
+            Answer the question based on the context below.
 
-                result = qa_chain.run(question)
+            Context:
+            {context}
 
-                st.subheader("📌 Answer")
-                st.write(result)
+            Question:
+            {question}
+            """
 
-            except Exception as e:
-                st.error(f"Error answering question: {e}")
-else:
-    st.info("👆 Upload and process a document to start asking questions.")
+            answer = qa_model(prompt)[0]["generated_text"]
+
+            st.subheader("📌 Answer")
+            st.write(answer)
+
 
