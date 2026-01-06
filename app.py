@@ -1,7 +1,6 @@
 import streamlit as st
 import tempfile
 import os
-import PyPDF2
 from transformers import pipeline
 
 st.set_page_config(page_title="📄 Document Q&A", layout="wide")
@@ -26,7 +25,8 @@ if uploaded_file:
 
     if st.button("📥 Process File"):
         try:
-            if uploaded_file.name.endswith(".pdf"):
+            if uploaded_file.name.lower().endswith(".pdf"):
+                import PyPDF2  # imported only when needed
                 reader = PyPDF2.PdfReader(file_path)
                 text = ""
                 for page in reader.pages:
@@ -35,14 +35,17 @@ if uploaded_file:
                 with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()
 
-            st.session_state.document_text = text
-            st.session_state.ready = True
-            st.success("✅ Document processed successfully")
+            if not text.strip():
+                st.error("❌ Could not extract text from file.")
+            else:
+                st.session_state.document_text = text
+                st.session_state.ready = True
+                st.success("✅ Document processed successfully")
 
             os.unlink(file_path)
 
         except Exception as e:
-            st.error(e)
+            st.error(f"Error processing file: {e}")
 
 if st.session_state.get("ready", False):
     st.divider()
@@ -56,7 +59,5 @@ if st.session_state.get("ready", False):
                 question=question,
                 context=st.session_state.document_text[:4000]
             )
-
             st.subheader("📌 Answer")
             st.write(result["answer"])
-
