@@ -105,12 +105,10 @@ if uploaded_files:
                     model_name="sentence-transformers/all-MiniLM-L6-v2"
                 )
                 
-                # Create vector store
-                vectorstore = Chroma.from_documents(
-                    documents=chunks,
-                    embedding=embeddings
-                )
-                
+             
+                # Replace Chroma with FAISS
+from langchain_community.vectorstores import FAISS
+vectorstore = FAISS.from_documents(chunks, embeddings)
                 # Load LLM
                 llm_pipeline = pipeline(
                     "text2text-generation",
